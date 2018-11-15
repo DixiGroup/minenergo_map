@@ -46,13 +46,9 @@ ui <- fluidPage(
                                   value = c(as.Date("2018-09-17"), as.Date("2018-10-17")),
                                   timeFormat = "%d.%m.%Y")),
              tags$br(),
-             radioButtons("map_type", "Тип графіка: ", choices = c("географічний", "схематичний")),
+             radioButtons("map_type", "Тип графіка: ", choices = c("борг", "борг і зміни", "зміни кольором", "зміни графіком")),
              helpText("Мапа генерується і змінюється тільки після натискання кнопки знизу:"),
              fluidRow(disabled(actionButton("generate_button", "Згенерувати мапу", width = "100%")))
-             #tags$br(),
-             #tags$br(),
-             #tags$br()
-             
              
            ),
            
@@ -62,7 +58,6 @@ ui <- fluidPage(
          wellPanel(
            fluidRow( #tags$hr(),
              helpText("Після того, як мапа згенерувалася, ви можете завантажити її на диск."),
-             
              column(1, 
                     radioButtons("extension", "Формат: ", choices = c("png", "pdf"))),
              column(2,
@@ -84,6 +79,7 @@ server <- function(session, input, output) {
   download.file(url = "https://github.com/localizator/ukrainian-fonts-pack/raw/master/BlissPro-Light%20-%20Bliss%20Pro%20-%20Light.ttf",
                 destfile = "~/.fonts/Bliss Pro Light.ttf")
   system('fc-cache -fEV ~/.fonts') 
+  cents_table <- read.csv("cents_table.csv")
   find_closest_date <- function(d, dates) {
     absolutes <- abs(dates - d)
     dates[which(absolutes == min(absolutes))]
@@ -103,7 +99,7 @@ server <- function(session, input, output) {
         enable("date_range")
         # змінюємо значення слайдера виходячи з наявних дат
         updateSliderInput(session = session, "date_range", value = c(max(debt$date) - 30, max(debt$date)), max = max(debt$date), min = min(debt$date))
-        ukr_adm2 <- readOGR("./ukraine_shapefiles/UKR_adm1.shp")
+        ukr_adm2 <- readOGR("./simplified_shapefiles/UKR_adm1-2.shp")
         ukrainian_names <- read.csv("map_correspondence.csv")
         map_extended <- append_data(ukr_adm2, ukrainian_names,  key.shp = "ID_1", key.data = "ID_1")
         # переносимо змінні в глобальне середовище
@@ -126,7 +122,7 @@ server <- function(session, input, output) {
       map_type <- isolate(input$map_type)
       date_string <- as.character(date2, format = "%d.%m.%Y")
       second_date_string <- as.character(date1, format = "%d.%m.%Y")
-      if (map_type == "географічний") {
+      if (map_type == "борг і зміни") {
         debt <- debt %>%
           dplyr::filter(date %in% c(date1, date2)) %>% 
           dplyr::group_by(region_code) %>% 
@@ -160,8 +156,8 @@ server <- function(session, input, output) {
         ukr_df <- broom::tidy(map_extended, region = "id")
         ukr_df <- plyr::join(ukr_df, map_extended@data, by = "id") %>% 
           dplyr::arrange(desc(debt_total))
-        billions <- as.character(round(ukr_df$debt_total / 1000000000, 1))
-        ukr_df$label <- paste(ukr_df$UA_NAME, "–", billions, "")
+        millions <- as.character(round(ukr_df$debt_total / 1000000, 1))
+        ukr_df$label <- paste(ukr_df$UA_NAME, "–", millions, "")
         # ukr_df$label <- mapply(function(d,r){
         #   billions <- format(round(d / 1000000, 1), decimal.mark = ",", big.mark = " ")
         #   paste(r, "–", billions, "")
@@ -215,7 +211,7 @@ server <- function(session, input, output) {
         pl_local$layout$clip[which(pl_local$layout$name == "logo")] <- "off"
         enable("downloadData")
         grid.draw(pl_local)
-      } else { if (map_type == "схематичний") {
+      } else { if (map_type == "зміни графіком") {
         debt <- debt %>% 
           filter(date >= date1, date <= date2)
         ukraine_grid <- read.csv("grid.csv")
@@ -269,7 +265,145 @@ server <- function(session, input, output) {
         pl_local$grobs[[which(pl_local$layout$name == "logo")]]$width <-  unit(1, "in")
         enable("downloadData")
         grid.draw(pl_local)
-      } }
+      } else {
+        if (map_type == "зміни кольором") {
+          debt <- debt %>%
+            dplyr::filter(date %in% c(date1, date2)) %>% 
+            dplyr::group_by(region_code) %>% 
+            dplyr::arrange(region_code, date) %>% 
+            dplyr::mutate(changes = c(0,diff(debt_total))) %>% 
+            dplyr::mutate(changes_percent = paste(round(100 * (changes / debt_total), 2), "%", sep="")) %>% 
+            data.frame()
+          debt <- filter(debt, date == date2)
+          map_extended <- append_data(map_extended, debt,  key.shp = "UA_NAME", key.data = "region")
+          map_extended@data$id <-  rownames(map_extended@data)
+          ukr_df <- broom::tidy(map_extended, region = "id")
+          total_df <- join(ukr_df, map_extended@data, by = "id") %>% 
+            dplyr::arrange(desc(debt_total))
+          changes_df <- join(ukr_df, map_extended@data, by = "id") %>% 
+            dplyr::arrange(desc(changes))
+          sc_changes <- scale_colour_gradient2(low = "#2c7bb6", high = "#d7191c", breaks = changes_df$changes) 
+          changes_df$color_changes <- sc_changes$palette(sc_changes$rescaler(changes_df$changes))
+          scale_changes_value <- changes_df$color_changes
+          names(scale_changes_value) <- as.character(changes_df$changes)
+          changes_millions <- as.character(round(changes_df$changes / 1000000, 1))
+          changes_df$label <-  paste(changes_df$UA_NAME, "–", ifelse(changes_millions > 0, paste0("+", changes_millions), changes_millions), "")
+          changes_df$changes <- factor(as.character(changes_df$changes), 
+                                       levels = as.character(unique(changes_df$changes)), ordered = TRUE)
+          changes_labels <- factor(unique(changes_df$label), levels = unique(changes_df$label), ordered = TRUE)
+          subtitle <- paste0('\nЗміни сумарного накопиченого боргу перед НАК "Нафтогаз України з ', 
+                             second_date_string, " до ", date_string, 
+                             ".\nЗавантажити дані: https://data.gov.ua/dataset/75140072-160d-4f87-ac08-a75a1d3557e8")
+          pl <<- ggplot(changes_df, aes(x = long, y= lat, group = group, fill = changes)) + 
+            ggtitle("Зміна боргу за поставки газу для виробництва тепла") +
+            geom_polygon() +
+            geom_polygon(data = subset(changes_df, !(id %in% c(10,19)))) + 
+            geom_polygon(data = subset(changes_df, (id %in% c(10,19)))) +
+            geom_path(color = "black", size = 0.05) +
+            scale_fill_manual(name = "Зміна боргу, млн грн", values = scale_changes_value, labels = changes_labels) +
+            theme(legend.key.size = unit(0.14, units = "inches")) +
+            geom_text(data = dplyr::filter(cents_table, region_code != "09", region_code != "9", region_code != "19"), 
+                      aes(x = coords.x1, y = coords.x2, label = UA_NAME), inherit.aes = FALSE, family = "Bliss Pro Light",
+                      size = 2) +
+            geom_text_repel(data = dplyr::filter(cents_table, region_code == "9"), 
+                            aes(x = coords.x1, y = coords.x2, label = UA_NAME), 
+                            inherit.aes = FALSE, nudge_y = 0.5, nudge_x = -0.5, segment.size = 0.15,
+                            family = "Bliss Pro Light", min.segment.length = 0.2, size = 2) +
+            geom_text_repel(data = dplyr::filter(cents_table, region_code == "19"), 
+                            aes(x = coords.x1, y = coords.x2, label = UA_NAME), 
+                            inherit.aes = FALSE, nudge_x = -0.5, nudge_y = 0.3, segment.size = 0.15,
+                            family = "Bliss Pro Light", min.segment.length = 0.2, size = 2) +
+            guides(fill = guide_legend(ncol = 1)) +
+            theme(axis.line = element_blank(), 
+                  axis.text = element_blank(),
+                  axis.ticks = element_blank(), axis.title = element_blank(),
+                  rect = element_blank(),
+                  text = element_text(family = "Bliss Pro Light"),
+                  legend.text = element_text(size = 8.5),
+                  plot.title = element_text(size = 10, family = "SourceSansPro", face = "bold"),
+                  legend.title = element_text(face = "bold"),
+                  plot.subtitle = element_blank(),
+                  plot.caption = element_text(color = "dimgrey", size = 8)) +
+            labs(caption = subtitle)
+          updateTextInput(session, inputId = "customtitle", value = pl$labels$title)
+          pl_local <- ggplot_gtable(ggplot_build(pl))
+          leftest_panel <- min(pl_local$layout$l[grepl("panel", pl_local$layout$name)])
+          caption_row  <- pl_local$layout$b[pl_local$layout$name == "caption"]
+          pl_local <- gtable_add_grob(pl_local, rasterGrob(logo), caption_row - 2, leftest_panel, caption_row, leftest_panel, name = "logo")
+          pl_local$grobs[[which(pl_local$layout$name == "logo")]]$hjust <- 5
+          pl_local$grobs[[which(pl_local$layout$name == "logo")]]$vjust <- 0
+          pl_local$grobs[[which(pl_local$layout$name == "logo")]]$height <- unit(0.8, "in")
+          pl_local$grobs[[which(pl_local$layout$name == "logo")]]$width <-  unit(0.8, "in")
+          pl_local$layout$clip[which(pl_local$layout$name == "logo")] <- "off"
+          enable("downloadData")
+          grid.draw(pl_local)
+        } else {
+          if ((map_type == "борг")) {
+            debt <- filter(debt, date == date2)
+            map_extended <- append_data(map_extended, debt,  key.shp = "UA_NAME", key.data = "region")
+            map_extended@data$id <-  rownames(map_extended@data)
+            sc <- scale_fill_continuous(low = "#fff7bc", high = "#d95f0e", breaks = map_extended@data$debt_total) 
+            map_extended@data$color <- sc$palette(sc$rescaler(map_extended@data$debt_total))
+            scale_value <- map_extended@data$color
+            names(scale_value) <- as.character(map_extended@data$debt_total)
+            ukr_df <- broom::tidy(map_extended, region = "id")
+            ukr_df <- plyr::join(ukr_df, map_extended@data, by = "id") %>% 
+              dplyr::arrange(desc(debt_total))
+            millions <- as.character(round(ukr_df$debt_total / 1000000, 1))
+            ukr_df$label <- paste(ukr_df$UA_NAME, "–", millions, "")
+            subtitle <- paste0('Сумарний накопичений борг перед НАК "Нафтогаз України" в розрізі регіонів\n', "Дані станом на ", 
+                               date_string, ".", ".\nЗавантажити дані: https://data.gov.ua/dataset/75140072-160d-4f87-ac08-a75a1d3557e8")
+            ukr_df$debt_total <- factor(as.character(ukr_df$debt_total), 
+                                        levels = as.character(unique(ukr_df$debt_total)), ordered = TRUE)
+            legend_labels <- factor(unique(ukr_df$label), levels = unique(ukr_df$label), ordered = TRUE)
+            pl <<- ggplot(ukr_df, aes(x = long, y= lat, group = group, fill = debt_total)) + 
+              ggtitle("Борги виробників тепла за газ") +
+              geom_polygon() +
+              geom_polygon(data = subset(ukr_df, !(id %in% c(10,19)))) + 
+              geom_polygon(data = subset(ukr_df, (id %in% c(10,19)))) + 
+              geom_path(color = "black", size = 0.05) +
+              geom_text(data = dplyr::filter(cents_table, region_code != "9", region_code != "19"), 
+                        aes(x = coords.x1, y = coords.x2, label = UA_NAME), inherit.aes = FALSE, size = 2, 
+                        family = "Bliss Pro Light") +
+              geom_text_repel(data = dplyr::filter(cents_table, region_code == "9"), 
+                              aes(x = coords.x1, y = coords.x2, label = UA_NAME), 
+                              inherit.aes = FALSE, nudge_y = 0.5, nudge_x = -0.3, size = 2, segment.size = 0.15,
+                              family = "Bliss Pro Light", min.segment.length = 0.2) +
+              geom_text_repel(data = dplyr::filter(cents_table, region_code == "19"), 
+                              aes(x = coords.x1, y = coords.x2, label = UA_NAME), 
+                              inherit.aes = FALSE, nudge_x = -0.5, nudge_y = 0.3, size = 2, segment.size = 0.15,
+                              family = "Bliss Pro Light", min.segment.length = 0.2) +
+              scale_fill_manual(name = "Борг, млн грн", values = scale_value, labels = legend_labels) +
+              scale_color_manual(values = c(green = "darkgreen", red = "darkred"), guide=FALSE) +
+              theme(legend.key.size = unit(0.14, units = "inches")) +
+              guides(fill = guide_legend(ncol = 1)) +
+              theme(axis.line = element_blank(), 
+                    axis.text = element_blank(),
+                    axis.ticks = element_blank(), axis.title = element_blank(),
+                    rect = element_blank(),
+                    text = element_text(family = "Bliss Pro Light"),
+                    legend.text = element_text(size = 8.5),
+                    plot.title = element_text(size = 10, family = "SourceSansPro", face = "bold"),
+                    legend.title = element_text(face = "bold"),
+                    plot.subtitle = element_blank(),
+                    plot.caption = element_text(color = "dimgrey", size = 8)) +
+              labs(caption = subtitle) +
+              coord_map()
+            updateTextInput(session, inputId = "customtitle", value = pl$labels$title)
+            pl_local <- ggplot_gtable(ggplot_build(pl))
+            leftest_panel <- min(pl_local$layout$l[grepl("panel", pl_local$layout$name)])
+            caption_row  <- pl_local$layout$b[pl_local$layout$name == "caption"]
+            pl_local <- gtable_add_grob(pl_local, rasterGrob(logo), caption_row - 2, leftest_panel, caption_row, leftest_panel, name = "logo")
+            pl_local$grobs[[which(pl_local$layout$name == "logo")]]$hjust <- 3
+            pl_local$grobs[[which(pl_local$layout$name == "logo")]]$height <- unit(1, "in")
+            pl_local$grobs[[which(pl_local$layout$name == "logo")]]$width <-  unit(1, "in")
+            pl_local$layout$clip[which(pl_local$layout$name == "logo")] <- "off"
+            enable("downloadData")
+            grid.draw(pl_local)
+          }
+        }
+      }
+      }
     })
   })
   
