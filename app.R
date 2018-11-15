@@ -324,16 +324,17 @@ server <- function(session, input, output) {
                   legend.title = element_text(face = "bold"),
                   plot.subtitle = element_blank(),
                   plot.caption = element_text(color = "dimgrey", size = 8)) +
-            labs(caption = subtitle)
+            labs(caption = subtitle) +
+            coord_map()
           updateTextInput(session, inputId = "customtitle", value = pl$labels$title)
           pl_local <- ggplot_gtable(ggplot_build(pl))
           leftest_panel <- min(pl_local$layout$l[grepl("panel", pl_local$layout$name)])
           caption_row  <- pl_local$layout$b[pl_local$layout$name == "caption"]
           pl_local <- gtable_add_grob(pl_local, rasterGrob(logo), caption_row - 2, leftest_panel, caption_row, leftest_panel, name = "logo")
-          pl_local$grobs[[which(pl_local$layout$name == "logo")]]$hjust <- 5
-          pl_local$grobs[[which(pl_local$layout$name == "logo")]]$vjust <- 0
-          pl_local$grobs[[which(pl_local$layout$name == "logo")]]$height <- unit(0.8, "in")
-          pl_local$grobs[[which(pl_local$layout$name == "logo")]]$width <-  unit(0.8, "in")
+          pl_local$grobs[[which(pl_local$layout$name == "logo")]]$hjust <- 3
+          #pl_local$grobs[[which(pl_local$layout$name == "logo")]]$vjust <- 0
+          pl_local$grobs[[which(pl_local$layout$name == "logo")]]$height <- unit(1, "in")
+          pl_local$grobs[[which(pl_local$layout$name == "logo")]]$width <-  unit(1, "in")
           pl_local$layout$clip[which(pl_local$layout$name == "logo")] <- "off"
           enable("downloadData")
           grid.draw(pl_local)
