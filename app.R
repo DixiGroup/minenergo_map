@@ -86,6 +86,16 @@ server <- function(session, input, output) {
   }
   
 
+  make_unique <- function(values, labels) {
+    un_labels <- unique(labels)
+    changes <- 0.1 / seq_along(un_labels)
+    for (i in 1:length(values)) {
+      values[i] <- values[i] +  changes[which(un_labels == labels[i])]
+    }
+    values
+  }
+  
+
   
   upload_react <- observeEvent(input$file1, {
     req(input$file1)
@@ -100,6 +110,7 @@ server <- function(session, input, output) {
         # змінюємо значення слайдера виходячи з наявних дат
         updateSliderInput(session = session, "date_range", value = c(max(debt$date) - 30, max(debt$date)), max = max(debt$date), min = min(debt$date))
         ukr_adm2 <- readOGR("./simplified_shapefiles/UKR_adm1-2.shp")
+        #ukr_adm2 <- readOGR("./ukraine_shapefiles/UKR_adm1.shp")
         ukrainian_names <- read.csv("map_correspondence.csv")
         map_extended <- append_data(ukr_adm2, ukrainian_names,  key.shp = "ID_1", key.data = "ID_1")
         # переносимо змінні в глобальне середовище
@@ -128,7 +139,11 @@ server <- function(session, input, output) {
           dplyr::group_by(region_code) %>% 
           dplyr::arrange(region_code, date) %>% 
           dplyr::mutate(changes = c(0,diff(debt_total))) %>% 
-          dplyr::mutate(changes_percent = paste(round(100 * (changes / debt_total), 2), "%", sep="")) %>% 
+          dplyr::ungroup() %>% 
+          dplyr::mutate(changes = make_unique(changes, region), debt_total = make_unique(debt_total, region)) %>% 
+          dplyr::group_by(region_code) %>% 
+          dplyr::mutate(previous_total = rev(debt_total)) %>%  
+          dplyr::mutate(changes_percent = paste(round(100 * (changes / previous_total) * sign(previous_total), 2), "%", sep="")) %>% 
           data.frame()
         debt_plus <- paste0("+", debt$changes_percent)
         debt$changes_percent[debt$changes > 0] <- debt_plus[debt$changes > 0]
@@ -272,17 +287,31 @@ server <- function(session, input, output) {
             dplyr::group_by(region_code) %>% 
             dplyr::arrange(region_code, date) %>% 
             dplyr::mutate(changes = c(0,diff(debt_total))) %>% 
+            dplyr::ungroup() %>% 
+            dplyr::mutate(changes = make_unique(changes, region), debt_total = make_unique(debt_total, region)) %>% 
+            dplyr::group_by(region_code) %>% 
             dplyr::mutate(changes_percent = paste(round(100 * (changes / debt_total), 2), "%", sep="")) %>% 
             data.frame()
+          #print(unique(debt$region))
+          #print(length(unique(debt$changes)))
           debt <- filter(debt, date == date2)
           map_extended <- append_data(map_extended, debt,  key.shp = "UA_NAME", key.data = "region")
+          #print(head(map_extended@data))
           map_extended@data$id <-  rownames(map_extended@data)
+          #print(unique(map_extended@data$region))
           ukr_df <- broom::tidy(map_extended, region = "id")
+          #print(nrow(ukr_df))
+          #print(names(ukr_df))
+          #print(unique(ukr_df$id))
           total_df <- join(ukr_df, map_extended@data, by = "id") %>% 
             dplyr::arrange(desc(debt_total))
+          #print(nrow(total_df))
           changes_df <- join(ukr_df, map_extended@data, by = "id") %>% 
             dplyr::arrange(desc(changes))
+          #print(names(changes_df))
           sc_changes <- scale_colour_gradient2(low = "#2c7bb6", high = "#d7191c", breaks = changes_df$changes) 
+          #print(length(unique(changes_df$changes)))
+          
           changes_df$color_changes <- sc_changes$palette(sc_changes$rescaler(changes_df$changes))
           scale_changes_value <- changes_df$color_changes
           names(scale_changes_value) <- as.character(changes_df$changes)
@@ -341,6 +370,7 @@ server <- function(session, input, output) {
         } else {
           if ((map_type == "борг")) {
             debt <- filter(debt, date == date2)
+            debt$debt_total <- make_unique(debt$debt_total, debt$region)
             map_extended <- append_data(map_extended, debt,  key.shp = "UA_NAME", key.data = "region")
             map_extended@data$id <-  rownames(map_extended@data)
             sc <- scale_fill_continuous(low = "#fff7bc", high = "#d95f0e", breaks = map_extended@data$debt_total) 
