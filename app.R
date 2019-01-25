@@ -65,7 +65,13 @@ ui <- fluidPage(
              column(4, 
                    textInput("customtitle", label = "Заголовок на мапі у файлі")),
              column(2,
-                    disabled(downloadButton('downloadData', 'Завантажити мапу')))))
+                    disabled(downloadButton('downloadData', 'Завантажити мапу')))),
+           fluidRow(tags$hr(),
+                    column(12, 
+                           img(src = "./dixilogo_small.png"))),
+           fluidRow(column(12, 
+                           helpText("Виконання цього інструменту стало можливим завдяки підтримці американського народу, наданій через Агентство США з міжнародного розвитку (USAID). Дані, що використані в цьому інструменті, є виключною відповідальністю їх власників і за жодних обставин не можуть розглядатися як такі, що відображають позицію DiXi Group, USAID чи Уряду США.")))
+           )
          
   )
 )
@@ -87,6 +93,8 @@ server <- function(session, input, output) {
   
 
   make_unique <- function(values, labels) {
+    print(values)
+    print(labels)
     un_labels <- unique(labels)
     changes <- 0.1 / seq_along(un_labels)
     for (i in 1:length(values)) {
